@@ -26,7 +26,7 @@ ColumnLayout
         // init editor with empty model
         textView.model = qmlUtils.wrapLargeText("")
         textView.readOnly = false
-        textView.textFormat = TextEdit.PlainText
+        textView.textFormat = TextEdit.PlainText            
     }
 
     function validationRule(raw)
@@ -112,6 +112,7 @@ ColumnLayout
         if (qmlUtils.binaryStringLength(root.value) > valueSizeLimit) {
             root.showFormatters = false
             formatterSelector.currentIndex = 0
+            guessFormatter = false
         } else {
             root.showFormatters = true
         }
@@ -174,35 +175,24 @@ ColumnLayout
 
         uiBlocker.visible = true
 
-        formatter.instance.getFormatted(root.value, function (error, formatted, isReadOnly, format) {
+        if (formatter['name'] === 'JSON') {
+            jsonFormattingWorker.sendMessage(String(root.value))
+        } else {
+            formatter.instance.getFormatted(root.value, function (error, formatted, isReadOnly, format) {
 
-            function process(error, formatted, stub, format) {
-                if (error || !formatted) {
-                    uiBlocker.visible = false
-                    formatterSelector.currentIndex = isBin? 2 : 0 // Reset formatter to plain text
-                    notification.showError(error || qsTranslate("RDM","Unknown formatter error (Empty response)"))
-                    return
+                function process(error, formatted, stub, format) {
+                    jsonFormattingWorker.processFormatted(error, formatted, stub, format)
                 }
 
-                textView.textFormat = (format === "html")
-                    ? TextEdit.RichText
-                    : TextEdit.PlainText;
-
-                defaultFormatterSettings.defaultFormatterIndex = formatterSelector.currentIndex
-                textView.model = qmlUtils.wrapLargeText(formatted)
-                textView.readOnly = isReadOnly
-                root.isEdited = false
-                uiBlocker.visible = false                
-            }
-
-            if (format === "json") {
                 textView.format = format
-                Formatters.json.getFormatted(formatted, process)
-            } else {
-                textView.format = format
-                process(error, formatted, isReadOnly, format);
-            }            
-        })
+
+                if (format === "json") {
+                    jsonFormattingWorker.sendMessage(String(formatted))
+                } else {
+                    process(error, formatted, isReadOnly, format);
+                }
+            })
+        }
     }
 
     function reset() {
@@ -228,6 +218,36 @@ ColumnLayout
     function hideValidationError() {
         validationError.visible = false
     }
+
+    WorkerScript {
+        id: jsonFormattingWorker
+
+        source: "./formatters/json-tools.js"
+        onMessage: {
+            textView.format = messageObject.format
+            processFormatted(messageObject.error, messageObject.formatted, messageObject.isReadOnly, messageObject.format);
+        }
+
+        function processFormatted(error, formatted, isReadOnly, format) {
+            if (error || !formatted) {
+                uiBlocker.visible = false
+                formatterSelector.currentIndex = isBin? 2 : 0 // Reset formatter to plain text
+                notification.showError(error || qsTranslate("RDM","Unknown formatter error (Empty response)"))
+                return
+            }
+
+            textView.textFormat = (format === "html")
+                ? TextEdit.RichText
+                : TextEdit.PlainText;
+
+            defaultFormatterSettings.defaultFormatterIndex = formatterSelector.currentIndex
+            textView.model = qmlUtils.wrapLargeText(formatted)
+            textView.readOnly = isReadOnly
+            root.isEdited = false
+            uiBlocker.visible = false
+        }
+    }
+
 
     RowLayout{
         Layout.fillWidth: true
@@ -271,7 +291,10 @@ ColumnLayout
             textRole: "name"
             objectName: "rdm_value_editor_formatter_combobox"
 
-            onCurrentIndexChanged: loadFormattedValue()
+            onActivated: {
+                currentIndex = index
+                loadFormattedValue()
+            }
         }
 
         Text { visible: !showFormatters && qmlUtils.binaryStringLength(root.value) > valueSizeLimit; text: qsTranslate("RDM","Large value (>150kB). Formatters is not available."); color: "red"; }
@@ -303,21 +326,26 @@ ColumnLayout
                 property string format
 
                 delegate:
-                    NewTextArea {
-                        id: textAreaPart
-                        objectName: "rdm_key_multiline_text_field_" + index
+                    Item {
                         width: texteditorWrapper.width
                         height: textAreaPart.contentHeight < texteditorWrapper.height? texteditorWrapper.height - 5 : textAreaPart.contentHeight
 
-                        enabled: root.enabled
-                        text: value
+                        NewTextArea {
+                            anchors.fill: parent
+                            id: textAreaPart
+                            objectName: "rdm_key_multiline_text_field_" + index
 
-                        textFormat: textView.textFormat
-                        readOnly: textView.readOnly
 
-                        onTextChanged: {
-                            root.isEdited = true
-                            textView.model && textView.model.setTextChunk(index, textAreaPart.text)
+                            enabled: root.enabled
+                            text: value
+
+                            textFormat: textView.textFormat
+                            readOnly: textView.readOnly
+
+                            Keys.onReleased: {
+                                root.isEdited = true
+                                textView.model && textView.model.setTextChunk(index, textAreaPart.text)
+                            }
                         }
                     }
                 }

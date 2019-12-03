@@ -41,9 +41,16 @@ Application::Application(int& argc, char** argv)
   processCmdArgs();
   initAppFonts();
   initRedisClient();
+#ifndef RDM_APPSTORE
   initUpdater();
+#endif
   installTranslator();
   initPython();
+}
+
+Application::~Application()
+{
+    m_connections.clear();
 }
 
 void Application::initModels() {
@@ -69,7 +76,7 @@ void Application::initModels() {
 
   m_keyValues =
       QSharedPointer<ValueEditor::TabsModel>(new ValueEditor::TabsModel(
-          m_keyFactory.staticCast<ValueEditor::AbstractKeyFactory>()));
+          m_keyFactory.staticCast<ValueEditor::AbstractKeyFactory>(), m_events));
 
   connect(m_events.data(), &Events::openValueTab, m_keyValues.data(),
           &ValueEditor::TabsModel::openTab);

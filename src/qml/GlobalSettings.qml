@@ -17,7 +17,7 @@ Dialog {
     contentItem: Rectangle {
         id: dialogRoot
         implicitWidth: 800
-        implicitHeight: PlatformUtils.isOSX()? 680 : 600
+        implicitHeight: PlatformUtils.isOSX()? 500 : 600
 
         border.color: "#eeeeee"
         border.width: 1
@@ -30,10 +30,11 @@ Dialog {
                 id: globalSettingsScrollView
                 width: parent.width
                 height: parent.height
+                horizontalScrollBarPolicy: Qt.ScrollBarAlwaysOff
 
                 ColumnLayout {
                     id: innerLayout
-                    width: globalSettingsScrollView.width - 20
+                    width: globalSettingsScrollView.width - 25
                     height: (dialogRoot.height - 50 > implicitHeight) ? dialogRoot.height - 50 : implicitHeight
 
                     SettingsGroupTitle {
@@ -149,16 +150,19 @@ Dialog {
                     }
 
                     SettingsGroupTitle {
-                        text: qsTranslate("RDM","Custom Value View Formatters")
+                        visible: !PlatformUtils.isOSX()
+                        text: qsTranslate("RDM","External Value View Formatters")
                     }
 
                     Text {
+                        visible: !PlatformUtils.isOSX()
                         text: qsTranslate("RDM","Formatters path: %0").arg(formattersManager.formattersPath())
                         font.pixelSize: 12
                         color: "grey"
                     }
 
                     TableView {
+                        visible: !PlatformUtils.isOSX()
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         verticalScrollBarPolicy: Qt.ScrollBarAlwaysOn

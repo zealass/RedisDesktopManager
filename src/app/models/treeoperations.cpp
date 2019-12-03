@@ -17,7 +17,8 @@
 TreeOperations::TreeOperations(
     QSharedPointer<RedisClient::Connection> connection,
     QSharedPointer<Events> events)
-    : m_connection(connection), m_events(events), m_dbCount(0) {
+    : m_connection(connection), m_events(events), m_dbCount(0),
+      m_connectionMode(RedisClient::Connection::Mode::Normal) {
   m_events->registerLoggerForConnection(*connection);
 }
 
@@ -27,6 +28,8 @@ bool TreeOperations::loadDatabases(
   m_events->registerLoggerForConnection(*connection);
 
   connect(connection);
+
+  if (!connection->isConnected()) return false;
 
   RedisClient::DatabaseList availableDatabeses = connection->getKeyspaceInfo();
 
@@ -84,6 +87,8 @@ void TreeOperations::connect(QSharedPointer<RedisClient::Connection> c) {
       return;
     }
 
+    m_connectionMode = c->mode();
+
   } catch (const RedisClient::Connection::SSHSupportException& e) {
       emit m_events->error(
           QCoreApplication::translate("RDM", "Open Source version of Redis Desktop Manager <b>doesn't support SSH tunneling</b>.<br /><br /> "
@@ -114,7 +119,8 @@ void TreeOperations::requestBulkOperation(
           .arg(ns.getFullPath().size() > 0 ? conf().namespaceSeparator() : "");
   QRegExp filter(pattern, Qt::CaseSensitive, QRegExp::Wildcard);
 
-  emit m_events->requestBulkOperation(m_connection, ns.getDbIndex(), op, filter,
+  // NOTE(u_glide): Use "clean" connection wihout logger here for better performance
+  emit m_events->requestBulkOperation(m_connection->clone(), ns.getDbIndex(), op, filter,
                                       callback);
 }
 
@@ -162,6 +168,8 @@ void TreeOperations::loadNamespaceItems(
       };
 
   connect(m_connection);
+
+  if (!m_connection->isConnected()) return;
 
   try {
     if (m_connection->mode() == RedisClient::Connection::Mode::Cluster) {
@@ -254,6 +262,7 @@ void TreeOperations::deleteDbKeys(ConnectionsTree::DatabaseItem& db) {
 void TreeOperations::deleteDbNamespace(ConnectionsTree::NamespaceItem& ns) {
   requestBulkOperation(ns, BulkOperations::Manager::Operation::DELETE_KEYS,
                        [this, &ns](QRegExp filter, int, const QStringList&) {
+                         ns.setRemoved();
                          emit m_events->closeDbKeys(m_connection,
                                                     ns.getDbIndex(), filter);
                        });
@@ -271,7 +280,7 @@ void TreeOperations::copyKeys(ConnectionsTree::AbstractNamespaceItem& ns) {
 
 void TreeOperations::importKeysFromRdb(ConnectionsTree::DatabaseItem& db) {
   emit m_events->requestBulkOperation(
-      m_connection, db.getDbIndex(),
+      m_connection->clone(), db.getDbIndex(),
       BulkOperations::Manager::Operation::IMPORT_RDB_KEYS, QRegExp(".*"),
       [&db](QRegExp, int, const QStringList&) { db.reload(); });
 }
@@ -288,7 +297,36 @@ void TreeOperations::flushDb(int dbIndex,
 }
 
 QFuture<bool> TreeOperations::connectionSupportsMemoryOperations() {
-  return m_connection->isCommandSupported({"MEMORY", "HELP"});
+    return m_connection->isCommandSupported({"MEMORY", "HELP"});
+}
+
+void TreeOperations::openKeyIfExists(
+    const QByteArray& fullPath,
+    QSharedPointer<ConnectionsTree::DatabaseItem> parent,
+    std::function<void(const QString&, bool)> callback) {
+  if (!parent) {
+    qWarning() << "TreeOperations::openKeyIfExists > Invalid parent";
+    return;
+  }
+
+  m_connection->cmd(
+      {"exists", fullPath}, this, static_cast<int>(parent->getDbIndex()),
+      [this, parent, fullPath, callback](RedisClient::Response r) {
+        QVariant result = r.value();
+
+        if (result.toByteArray() == "1") {
+          auto key = QSharedPointer<ConnectionsTree::KeyItem>(
+              new ConnectionsTree::KeyItem(fullPath, parent.toWeakRef(),
+                                           parent->model()));
+
+          emit m_events->openValueTab(m_connection, key, true);
+
+          callback(QString(), true);
+        } else {
+          callback(QString(), false);
+        }
+      },
+      [callback](const QString& err) { callback(err, false); });
 }
 
 QFuture<qlonglong> TreeOperations::getUsedMemory(const QByteArray& key,
@@ -319,9 +357,9 @@ QFuture<qlonglong> TreeOperations::getUsedMemory(const QByteArray& key,
 }
 
 QString TreeOperations::mode() {
-  if (m_connection->mode() == RedisClient::Connection::Mode::Cluster) {
+  if (m_connectionMode == RedisClient::Connection::Mode::Cluster) {
     return QString("cluster");
-  } else if (m_connection->mode() == RedisClient::Connection::Mode::Sentinel) {
+  } else if (m_connectionMode == RedisClient::Connection::Mode::Sentinel) {
     return QString("sentinel");
   } else {
     return QString("standalone");
